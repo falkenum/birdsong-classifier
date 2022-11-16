@@ -1,0 +1,9 @@
+wav/
+resampled/
+mp3/
+denoised/
+chunks/
+lightning_logs/
+.vscode/
+.ipynb_checkpoints/
+metadata.csv
