@@ -1,5 +1,5 @@
 import torchaudio
-from torchaudio.transforms import MelSpectrogram
+from torchaudio.transforms import MelSpectrogram, AmplitudeToDB
 import pytorch_lightning as pl
 from torchinfo import summary
 # from torch.utils.data.dataset import random_split
@@ -37,7 +37,7 @@ class BirdsongDataset(MapDataPipe):
     def __len__(self):
         return len(self.filenames)
 
-dataset = BirdsongDataset('chunks')
+dataset = BirdsongDataset('denoised')
 torch.manual_seed(0)
 traindata, testdata= random_split(dataset, (0.8, 0.2))
 traindata, valdata = random_split(traindata, (0.9, 0.1))
@@ -48,29 +48,30 @@ val_dataloader = DataLoader(valdata, batch_size=VAL_BATCH_SIZE, num_workers=12)
 
 sample_batch = torch.cat([dataset[i][0][None, :] for i in range(TRAIN_BATCH_SIZE)], dim=0)
 
-conv = nn.Sequential(
+process = nn.Sequential(
     MelSpectrogram(sample_rate=SR, n_fft=1024),
-    nn.Conv2d(1, 32, kernel_size=(3, 7), padding='same'),
+    AmplitudeToDB(),
+)
+
+conv = nn.Sequential(
+    nn.Conv2d(1, 32, kernel_size=(3, 7)),
     nn.MaxPool2d(kernel_size=(1, 4)),
     nn.ReLU(),
-    nn.Conv2d(32, 32, kernel_size=(3, 5), padding='same'),
+    nn.Conv2d(32, 32, kernel_size=(3, 5)),
     nn.MaxPool2d(kernel_size=(1, 4)),
     nn.ReLU(),
-    nn.Conv2d(32, 64, kernel_size=(3, 3), padding='same'),
-    nn.MaxPool2d(kernel_size=(2, 3)),
-    nn.ReLU(),
-    nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'),
-    nn.MaxPool2d(kernel_size=(4, 4)),
-    nn.ReLU(),
-    nn.Conv2d(64, 64, kernel_size=(3, 3), padding='same'),
+    nn.Conv2d(32, 64, kernel_size=(3, 3)),
     nn.MaxPool2d(kernel_size=(4, 4)),
     nn.ReLU(),
     nn.Flatten(),
 )
-conv_outshape = conv(sample_batch).shape[1]
+conv_outshape = conv(process(sample_batch)).shape[1]
 
-dense = nn.Linear(in_features=conv_outshape, out_features=len(dataset.class_name_to_idx))
-model = nn.Sequential(conv, dense)
+dense = nn.Sequential(
+    nn.Linear(in_features=conv_outshape, out_features=conv_outshape//128),
+    nn.Linear(in_features=conv_outshape//128, out_features=len(dataset.class_name_to_idx)),
+)
+model = nn.Sequential(process, conv, dense)
 
 print(summary(model, input_size=sample_batch.shape))
 
@@ -105,8 +106,6 @@ class BirdsongClassifer(pl.LightningModule):
 
 
 classifier = BirdsongClassifer(model)
-
-
 trainer = pl.Trainer(max_epochs=10000, accelerator='gpu', check_val_every_n_epoch=3)
-trainer.fit(model=classifier, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, )
+trainer.fit(model=classifier, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
